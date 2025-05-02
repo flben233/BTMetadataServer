@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <link rel="icon" href="/favicon.ico" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BT Info</title>
+  <style>
+      body {
+          font-family: Arial, sans-serif;
+          max-width: 800px;
+          margin: 0 auto;
+          padding: 20px;
+      }
+      .header {
+          font-size: 24px;
+          font-weight: bold;
+          margin-bottom: 10px;
+      }
+      .search-box {
+          margin: 20px 0;
+      }
+      input {
+          padding: 8px;
+          width: 300px;
+      }
+      button {
+          padding: 8px 15px;
+          background-color: #4CAF50;
+          color: white;
+          border: none;
+          cursor: pointer;
+      }
+      button:hover {
+          background-color: #45a049;
+      }
+      .metadata {
+          margin-top: 20px;
+          border: 1px solid #ddd;
+          padding: 15px;
+          border-radius: 5px;
+          display: none;
+      }
+      .metadata h2 {
+          margin-top: 0;
+      }
+      .file-list {
+          list-style: none;
+          padding: 0;
+      }
+      .file-item {
+          padding: 8px;
+          margin-bottom: 5px;
+          background-color: #f5f5f5;
+          border-radius: 3px;
+      }
+      .tree-view {
+          list-style: none;
+          padding-left: 0;
+      }
+      .tree-view ul {
+          list-style: none;
+          padding-left: 20px;
+      }
+      .tree-view li {
+          padding: 5px 0;
+      }
+      .folder {
+          cursor: pointer;
+          font-weight: bold;
+      }
+      .folder:before {
+          content: "📁 ";
+      }
+      .file:before {
+          content: "📄 ";
+      }
+      .download-button {
+          margin-top: 15px;
+          background-color: #2196F3;
+      }
+      .download-button:hover {
+          background-color: #0b7dda;
+      }
+      .error {
+          color: red;
+          margin-top: 10px;
+      }
+      @-webkit-keyframes rotation {
+          from {
+              -webkit-transform: rotate(0deg);
+          }
+          to {
+              -webkit-transform: rotate(360deg);
+          }
+      }
+      #loading {
+          -webkit-transform: rotate(360deg);
+          animation: rotation 3s linear infinite;
+          -moz-animation: rotation 3s linear infinite;
+          -webkit-animation: rotation 3s linear infinite;
+          -o-animation: rotation 3s linear infinite;
+          width: fit-content;
+          height: fit-content;
+          display: none;
+      }
+  </style>
+</head>
+<body>
+<div class="header">BT Info —— Get metadata from info hash</div>
+<hr/>
+
+<div class="search-box">
+  <input type="text" id="infoHash" placeholder="Enter info hash" />
+  <button onclick="submitInfoHash()">Submit</button>
+  <div id="loading" style="">↻</div>
+</div>
+
+<div id="result" class="metadata">
+  <h2 id="title">Title</h2>
+  <div id="basic-info">
+    <p><strong>Info Hash:</strong> <span id="hash"></span></p>
+    <p><strong>Size:</strong> <span id="size"></span></p>
+    <p><strong>Published:</strong> <span id="publish"></span></p>
+    <p><strong>Category:</strong> <span id="category"></span></p>
+  </div>
+
+  <div id="file-info">
+    <h3>Files:</h3>
+    <div id="file-list" class="file-list"></div>
+  </div>
+
+  <button id="download-button" class="download-button" onclick="downloadTorrent()">Download Torrent File</button>
+</div>
+
+<div id="error-message" class="error"></div>
+
+<script>
+    let currentHash = '';
+
+    function formatSize(bytes) {
+        if (bytes === 0) return '0 Bytes';
+        const k = 1024;
+        const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    }
+
+    function renderFileList(files) {
+        const fileList = document.getElementById('file-list');
+        fileList.innerHTML = '';
+
+        // Create a tree structure from the files array
+        const fileTree = {};
+
+        // First, build the tree structure
+        files.forEach(file => {
+            let pathParts = file.path;
+            if (!Array.isArray(pathParts)) {
+                pathParts = [pathParts];
+            }
+
+            let currentLevel = fileTree;
+            for (let i = 0; i < pathParts.length; i++) {
+                const part = pathParts[i];
+                if (i === pathParts.length - 1) {
+                    // This is a file
+                    currentLevel[part] = {
+                        isFile: true,
+                        size: file.length
+                    };
+                } else {
+                    // This is a directory
+                    if (!currentLevel[part]) {
+                        currentLevel[part] = {};
+                    }
+                    currentLevel = currentLevel[part];
+                }
+            }
+        });
+
+        // Create a tree view element
+        const treeView = document.createElement('ul');
+        treeView.className = 'tree-view';
+
+        // Recursively build the tree DOM
+        function buildTreeDOM(node, parentElement) {
+            Object.keys(node).sort().forEach(key => {
+                const item = node[key];
+                const li = document.createElement('li');
+
+                if (item.isFile) {
+                    // It's a file
+                    li.innerHTML = `<span class="file">${key} (${formatSize(item.size)})</span>`;
+                    li.className = 'file-item';
+                } else {
+                    // It's a folder
+                    const folderSpan = document.createElement('span');
+                    folderSpan.className = 'folder';
+                    folderSpan.textContent = key;
+                    li.appendChild(folderSpan);
+
+                    // Create a nested list for the folder contents
+                    const ul = document.createElement('ul');
+                    li.appendChild(ul);
+
+                    // Recursively build the children
+                    buildTreeDOM(item, ul);
+
+                    // Add click event to toggle folder
+                    folderSpan.addEventListener('click', function() {
+                        ul.style.display = ul.style.display === 'none' ? 'block' : 'none';
+                    });
+                }
+
+                parentElement.appendChild(li);
+            });
+        }
+
+        buildTreeDOM(fileTree, treeView);
+        fileList.appendChild(treeView);
+    }
+
+    function displaySingleFile(data) {
+        document.getElementById('title').textContent = data.extra.title || data.name;
+        document.getElementById('hash').textContent = data.extra.infoHash;
+        document.getElementById('size').textContent = formatSize(data.length);
+        document.getElementById('publish').textContent = data.extra.publish || 'Unknown';
+        document.getElementById('category').textContent = data.extra.category || 'Unknown';
+
+        // Create a single file entry
+        const fileList = document.getElementById('file-list');
+        fileList.innerHTML = '';
+        const li = document.createElement('li');
+        li.className = 'file-item';
+        li.innerHTML = `<strong>${data.name}</strong> (${formatSize(data.length)})`;
+        fileList.appendChild(li);
+    }
+
+    function displayMultipleFiles(data) {
+        document.getElementById('title').textContent = data.name;
+        document.getElementById('hash').textContent = data.extra.infoHash;
+        document.getElementById('size').textContent = formatSize(data.files.reduce((total, file) => total + file.length, 0));
+        document.getElementById('publish').textContent = data.extra.publish || 'Unknown';
+        document.getElementById('category').textContent = data.extra.category || 'Unknown';
+
+        renderFileList(data.files);
+    }
+
+    function submitInfoHash() {
+        const hashInput = document.querySelector("#infoHash").value.trim();
+        if (!hashInput) {
+            showError("Please enter an info hash");
+            return;
+        }
+
+        currentHash = hashInput;
+        document.getElementById('result').style.display = 'none';
+        document.getElementById('error-message').textContent = '';
+        document.querySelector("#loading").style.display = "block";
+        fetch("/api/metadata/query/" + hashInput)
+            .then(response => {
+                if (response.ok) {
+                    return response.json();
+                } else {
+                    throw new Error("Network response was not ok");
+                }
+            })
+            .then(data => {
+                if (data.success) {
+                    const metadataEl = document.getElementById('result');
+                    metadataEl.style.display = 'block';
+
+                    if (data.data.files) {
+                        // Multiple files case
+                        displayMultipleFiles(data.data);
+                    } else {
+                        // Single file case
+                        displaySingleFile(data.data);
+                    }
+                } else {
+                    showError("Error: " + (data.msg || "Unknown error"));
+                }
+                document.querySelector("#loading").style.display = "none";
+            })
+            .catch(error => {
+                console.error("There was a problem with the fetch operation:", error);
+                showError("Error: " + error.message);
+            });
+    }
+
+    function downloadTorrent() {
+        if (!currentHash) {
+            showError("No info hash available for download");
+            return;
+        }
+
+        window.location.href = "/api/metadata/torrent/" + currentHash;
+    }
+
+    function showError(message) {
+        document.getElementById('error-message').textContent = message;
+    }
+</script>
+</body>
+</html>
